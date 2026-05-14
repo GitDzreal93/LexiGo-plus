@@ -1,0 +1,63 @@
+name: LexiGo
+options:
+  bundleIdPrefix: com.lexigo
+  deploymentTarget:
+    iOS: "18.0"
+  xcodeVersion: "15.0"
+
+settings:
+  SWIFT_VERSION: "5.9"
+  TARGETED_DEVICE_FAMILY: "1"  # iPhone only
+  INFOPLIST_KEY_UIRequiredDeviceCapabilities: []
+  INFOPLIST_KEY_UISupportedInterfaceOrientations:
+    - UIInterfaceOrientationPortrait
+    - UIInterfaceOrientationPortraitUpsideDown
+    - UIInterfaceOrientationLandscapeLeft
+    - UIInterfaceOrientationLandscapeRight
+  INFOPLIST_KEY_UISupportedInterfaceOrientations~iphone:
+    - UIInterfaceOrientationPortrait
+    - UIInterfaceOrientationPortraitUpsideDown
+    - UIInterfaceOrientationLandscapeLeft
+    - UIInterfaceOrientationLandscapeRight
+
+packages:
+  speech-swift:
+    url: https://github.com/soniqo/speech-swift
+    branch: main
+
+targets:
+  LexiGo:
+    type: application
+    platform: iOS
+    dependencies:
+      - package: speech-swift
+        product: KokoroTTS
+    sources:
+      - path: LexiGo
+        excludes:
+          - "project.yml"
+      - path: ../classified_webp_150kb/categorized
+        group: categorized
+        type: folder
+        buildPhase: resources
+      - path: ../kokoro-coreml
+        group: kokoro-coreml
+        type: folder
+        buildPhase: resources
+        createsGroup: true
+    info:
+      path: LexiGo/Info.plist
+      properties:
+        CFBundleDisplayName: "LexiGo"
+        CFBundleName: "LexiGo"
+        CFBundleVersion: "1"
+        CFBundleShortVersionString: "1.0"
+        LSRequiresIPhoneOS: true
+        UILaunchScreen:
+          UIColorName: "AccentColor"
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.lexigo.app
+        INFOPLIST_FILE: LexiGo/Info.plist
+        DEVELOPMENT_TEAM: ""
+        # SWIFT_OBJC_BRIDGING_HEADER: LexiGo/Bridging-Header.h

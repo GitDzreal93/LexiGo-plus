@@ -1,0 +1,19 @@
+# Xcode
+DerivedData/
+*.xcuserdata
+build/
+*.app
+*.app.dSYM
+
+# macOS
+.DS_Store
+*.swp
+*.swo
+
+# XcodeGen generated (keep project.yml, regenerate with: xcodegen generate)
+LexiGo.xcodeproj
+
+# Environment
+.env
+*.p12
+*.mobileprovision
