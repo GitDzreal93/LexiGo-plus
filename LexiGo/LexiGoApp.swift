@@ -1,11 +1,13 @@
 import SwiftUI
+import GoogleMobileAds
 
 @main
 struct LexiGoApp: App {
-    // 在 App 启动时预加载数据
     init() {
         _ = WordDatabase.shared
         _ = TTSManager.shared
+        GADMobileAds.sharedInstance().start()
+        AdMobManager.shared.loadInterstitial()
     }
 
     var body: some Scene {

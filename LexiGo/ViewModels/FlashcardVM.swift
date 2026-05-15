@@ -32,6 +32,36 @@ class FlashcardVM: ObservableObject {
         didSet { saveLearnedWords() }
     }
 
+    // MARK: - 翻译
+
+    let translationService = TranslationService.shared
+
+    var currentWordTranslation: String? {
+        guard let word = currentWord,
+              translationService.showTranslation,
+              let t = translationService.translate(word.word)
+        else { return nil }
+        return t
+    }
+
+    func cycleLanguage() {
+        let all = AppLanguage.allCases
+        guard let idx = all.firstIndex(of: translationService.currentLanguage) else { return }
+        let next = all[(idx + 1) % all.count]
+        translationService.currentLanguage = next
+        objectWillChange.send()
+    }
+
+    func toggleTranslation() {
+        translationService.showTranslation.toggle()
+        objectWillChange.send()
+    }
+
+    func toggleEnglishWord() {
+        translationService.showEnglishWord.toggle()
+        objectWillChange.send()
+    }
+
     // MARK: - 计算属性
 
     var currentWord: WordEntry? {
@@ -112,8 +142,13 @@ class FlashcardVM: ObservableObject {
     func selectCategory(_ id: String) {
         currentIndex = 0
         wordRevealed = false
-        // 如果全部已学但还开着"仅新词"，自动切回全部
         let all = WordDatabase.shared.words(for: id)
+
+        // 立即预加载第一个词的音频，利用动画时间完成合成
+        if let first = all.first {
+            TTSManager.shared.preload(text: first.display, ipa: first.ipa)
+        }
+
         if showOnlyNew && all.allSatisfy({ learnedWords.contains($0.id) }) {
             showOnlyNew = false
         }
@@ -137,6 +172,14 @@ class FlashcardVM: ObservableObject {
         }
     }
 
+    /// 预加载下一张卡的音频缓存
+    func preloadAdjacent() {
+        let words = currentCategoryWords
+        guard words.count > 1 else { return }
+        let nextIdx = (currentIndex + 1) % words.count
+        TTSManager.shared.preload(text: words[nextIdx].display, ipa: words[nextIdx].ipa)
+    }
+
     func nextCard() {
         let words = currentCategoryWords
         if words.isEmpty { return }
@@ -154,11 +197,6 @@ class FlashcardVM: ObservableObject {
     func autoSpeak() {
         guard let word = currentWord else { return }
         TTSManager.shared.speak(text: word.display, ipa: word.ipa)
-    }
-
-    func slowSpeak() {
-        guard let word = currentWord else { return }
-        TTSManager.shared.speak(text: word.display, ipa: word.ipa, slow: true)
     }
 
     // MARK: - 逐词学习
@@ -220,6 +258,7 @@ class FlashcardVM: ObservableObject {
             }
             learnedCategories.insert(cat)
             stars += 1
+            AdMobManager.shared.showInterstitial()
         }
         // 更新 learnedCategories 的自动保存
         saveLearned()
@@ -241,6 +280,7 @@ class FlashcardVM: ObservableObject {
         withAnimation(.spring(response: 0.35, dampingFraction: 0.9)) {
             currentPage = .quiz(category: cat)
         }
+        AdMobManager.shared.showInterstitial()
     }
 
     func goBackToFlashcard() {

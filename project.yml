@@ -25,6 +25,9 @@ packages:
   KokoroCoreML:
     url: https://github.com/Jud/kokoro-coreml.git
     from: 0.8.0
+  GoogleMobileAds:
+    url: https://github.com/googleads/swift-package-manager-google-mobile-ads.git
+    from: 11.0.0
 
 targets:
   LexiGo:
@@ -33,6 +36,8 @@ targets:
     dependencies:
       - package: KokoroCoreML
         product: KokoroCoreML
+      - package: GoogleMobileAds
+        product: GoogleMobileAds
     sources:
       - path: LexiGo
         excludes:
@@ -53,8 +58,8 @@ targets:
         CFBundleVersion: "1"
         CFBundleShortVersionString: "1.0"
         LSRequiresIPhoneOS: true
-        UILaunchScreen:
-          UIColorName: "AccentColor"
+        UILaunchScreen: {}
+        GADApplicationIdentifier: "ca-app-pub-3940256099942544~1458002511"
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.lexigo.app

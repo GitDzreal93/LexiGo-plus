@@ -95,8 +95,11 @@ struct CategoryGrid: View {
                 .padding(.horizontal, 16)
                 .padding(.bottom, 100)
             }
+
+            AdBannerView(adUnitID: AdMobManager.shared.bannerAdUnitID)
+                .frame(height: 50)
         }
-        .ignoresSafeArea()
+        .ignoresSafeArea(edges: .top)
     }
 }
 

@@ -5,33 +5,32 @@ import SwiftUI
 struct FlashcardView: View {
     @ObservedObject var vm: FlashcardVM
     @State private var showingConfetti = false
-    @State private var transitionDirection: Int = 1 // 1=前进, -1=后退
+    @State private var transitionDirection: Int = 1
 
     var body: some View {
         VStack(spacing: 0) {
-            // 顶部栏
             topBar
 
             Spacer()
 
-            // 主卡片
             mainCard
                 .padding(.horizontal, 24)
 
             Spacer()
 
-            // 底部分页 + 控制按钮
             bottomControls
-                .padding(.bottom, 30)
+
+            AdBannerView(adUnitID: AdMobManager.shared.bannerAdUnitID)
+                .frame(height: 50)
+                .padding(.bottom, 16)
         }
         .ignoresSafeArea()
         .background(
             ConfettiContainer(showing: $showingConfetti)
         )
         .task(id: vm.currentIndex) {
-            // 切换卡片时自动播放发音
-            try? await Task.sleep(nanoseconds: 400_000_000) // 等转场动画稳定
             vm.autoSpeak()
+            vm.preloadAdjacent()
         }
     }
 
@@ -72,8 +71,48 @@ struct FlashcardView: View {
 
             Spacer()
 
-            // 筛选切换 + Quiz
-            HStack(spacing: 8) {
+            // 显示控制 + 筛选 + Quiz
+            HStack(spacing: 6) {
+                // EN 开关
+                Button(action: { vm.toggleEnglishWord() }) {
+                    Text("EN")
+                        .font(.bubbleFont(size: 14, relativeTo: .caption))
+                        .foregroundColor(vm.translationService.showEnglishWord ? Color(hex: "6366F1") : Color(hex: "4A4E69").opacity(0.4))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 8)
+                        .background(
+                            Capsule()
+                                .fill(.white.opacity(vm.translationService.showEnglishWord ? 0.9 : 0.5))
+                                .shadow(color: .black.opacity(0.04), radius: 4, x: 0, y: 2)
+                        )
+                }
+
+                // 语言切换
+                Button(action: { vm.cycleLanguage() }) {
+                    Text(vm.translationService.currentLanguage.flag)
+                        .font(.system(size: 22))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 8)
+                        .background(
+                            Capsule()
+                                .fill(.white.opacity(0.8))
+                                .shadow(color: .black.opacity(0.04), radius: 4, x: 0, y: 2)
+                        )
+                }
+
+                // 翻译开关
+                Button(action: { vm.toggleTranslation() }) {
+                    Text(vm.translationService.showTranslation ? "👁️" : "👁️‍🗨️")
+                        .font(.system(size: 18))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 8)
+                        .background(
+                            Capsule()
+                                .fill(.white.opacity(0.8))
+                                .shadow(color: .black.opacity(0.04), radius: 4, x: 0, y: 2)
+                        )
+                }
+
                 Button(action: { vm.toggleShowOnlyNew() }) {
                     Text(vm.showOnlyNew ? "🔄 New" : "🔄 All")
                         .font(.bubbleFont(size: 16, relativeTo: .subheadline))
@@ -115,7 +154,53 @@ struct FlashcardView: View {
 
     private var mainCard: some View {
         ZStack {
-            // 卡片背景（不动）
+            if let word = vm.currentWord {
+                wholeCard(for: word)
+                    .id(word.id)
+                    .transition(.asymmetric(
+                        insertion: .move(edge: transitionDirection > 0 ? .trailing : .leading)
+                            .combined(with: .opacity),
+                        removal: .move(edge: transitionDirection > 0 ? .leading : .trailing)
+                            .combined(with: .opacity)
+                            .combined(with: .scale(scale: 0.85))
+                    ))
+            }
+        }
+        .frame(maxHeight: UIScreen.main.bounds.height * 0.55)
+        .clipped()
+        .onTapGesture {
+            Haptic.light.play()
+            withAnimation(.spring(response: 0.2, dampingFraction: 0.6)) {
+                vm.revealWord()
+            }
+            if vm.wordRevealed {
+                triggerMiniConfetti()
+            }
+        }
+        .gesture(
+            DragGesture(minimumDistance: 30)
+                .onEnded { value in
+                    if value.translation.width < -50 {
+                        transitionDirection = 1
+                        Haptic.medium.play()
+                        withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) {
+                            vm.nextCard()
+                        }
+                    } else if value.translation.width > 50 {
+                        transitionDirection = -1
+                        Haptic.medium.play()
+                        withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) {
+                            vm.prevCard()
+                        }
+                    }
+                }
+        )
+    }
+
+    @ViewBuilder
+    private func wholeCard(for word: WordEntry) -> some View {
+        ZStack {
+            // 卡片背景
             RoundedRectangle(cornerRadius: 50)
                 .fill(.white.opacity(0.95))
                 .shadow(color: .black.opacity(0.05), radius: 20, x: 0, y: 15)
@@ -130,117 +215,76 @@ struct FlashcardView: View {
                         )
                 )
 
-            // 卡片内容（切换时滑动进出）
-            cardContentView
-        }
-        .frame(maxHeight: UIScreen.main.bounds.height * 0.55)
-        .clipped()
-        .onTapGesture {
-            Haptic.light.play()
-            withAnimation(.spring(response: 0.2, dampingFraction: 0.6)) {
-                vm.revealWord()
-            }
-            // 如果已经揭示，再点就是复习发音
-            if vm.wordRevealed {
-                triggerMiniConfetti()
-            }
-        }
-        .gesture(
-            DragGesture(minimumDistance: 30)
-                .onEnded { value in
-                    if value.translation.width < -50 {
-                        transitionDirection = 1
-                        Haptic.medium.play()
-                        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
-                            vm.nextCard()
-                        }
-                    } else if value.translation.width > 50 {
-                        transitionDirection = -1
-                        Haptic.medium.play()
-                        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
-                            vm.prevCard()
-                        }
-                    }
+            // 卡片内容
+            VStack(spacing: 12) {
+                // 图片
+                if let image = word.loadImage() {
+                    Image(uiImage: image)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(maxHeight: UIScreen.main.bounds.height * 0.3)
+                        .shadow(color: .black.opacity(0.1), radius: 8, x: 0, y: 6)
+                        .padding(.top, 20)
+                } else {
+                    RoundedRectangle(cornerRadius: 30)
+                        .fill(Color(hex: "E8E0F0").opacity(0.4))
+                        .frame(height: 180)
+                        .overlay(
+                            Text("🖼️")
+                                .font(.system(size: 80))
+                        )
+                        .padding(.top, 20)
                 }
-        )
-    }
 
-    private var cardContentView: some View {
-        VStack(spacing: 16) {
-            // 图片
-            if let word = vm.currentWord, let image = word.loadImage() {
-                Image(uiImage: image)
-                    .resizable()
-                    .scaledToFit()
-                    .frame(maxHeight: UIScreen.main.bounds.height * 0.35)
-                    .shadow(color: .black.opacity(0.1), radius: 8, x: 0, y: 6)
-                    .padding(.top, 20)
-                    .transition(.opacity.combined(with: .scale))
-            } else {
-                // 占位图
-                RoundedRectangle(cornerRadius: 30)
-                    .fill(Color(hex: "E8E0F0").opacity(0.4))
-                    .frame(height: 200)
-                    .overlay(
-                        Text("🖼️")
-                            .font(.system(size: 80))
-                    )
-                    .padding(.top, 20)
+                // 单词
+                if vm.translationService.showEnglishWord {
+                    Text(word.display)
+                        .font(.bubbleFont(size: vm.wordRevealed ? 56 : 40, relativeTo: .largeTitle))
+                        .foregroundColor(Color(hex: "6366F1").opacity(vm.wordRevealed ? 1 : 0.3))
+                        .scaleEffect(vm.wordRevealed ? 1.0 : 0.5)
+                        .opacity(vm.wordRevealed ? 1.0 : 0.0)
+                }
+
+                // 翻译（揭示后显示）
+                if vm.wordRevealed, let translation = vm.currentWordTranslation {
+                    Text(translation)
+                        .font(.bubbleFont(size: 24, relativeTo: .title3))
+                        .foregroundColor(Color(hex: "4A4E69").opacity(0.7))
+                        .padding(.bottom, 8)
+                }
+
+                if !vm.wordRevealed {
+                    Text("Tap the bubble ✨")
+                        .font(.bubbleFont(size: 20, relativeTo: .body))
+                        .foregroundColor(Color(hex: "6366F1").opacity(0.4))
+                        .padding(.bottom, 20)
+                }
             }
-
-            // 单词（初始隐藏，点击揭示）
-            if let word = vm.currentWord {
-                Text(word.display)
-                    .font(.bubbleFont(size: vm.wordRevealed ? 64 : 48, relativeTo: .largeTitle))
-                    .foregroundColor(Color(hex: "6366F1").opacity(vm.wordRevealed ? 1 : 0.3))
-                    .scaleEffect(vm.wordRevealed ? 1.0 : 0.5)
-                    .opacity(vm.wordRevealed ? 1.0 : 0.0)
-                    .padding(.bottom, 8)
-            }
-
-            if !vm.wordRevealed {
-                Text("Tap the bubble ✨")
-                    .font(.bubbleFont(size: 20, relativeTo: .body))
-                    .foregroundColor(Color(hex: "6366F1").opacity(0.4))
-                    .padding(.bottom, 20)
+            .padding(20)
+            .overlay(alignment: .topTrailing) {
+                if vm.isCurrentWordLearned {
+                    Text("✅")
+                        .font(.system(size: 32))
+                        .shadow(color: .black.opacity(0.15), radius: 3, x: 0, y: 2)
+                        .padding(12)
+                }
             }
         }
-        .padding(20)
-        .overlay(alignment: .topTrailing) {
-            // 已学标记
-            if vm.isCurrentWordLearned {
-                Text("✅")
-                    .font(.system(size: 32))
-                    .shadow(color: .black.opacity(0.15), radius: 3, x: 0, y: 2)
-                    .padding(12)
-            }
-        }
-        .id(vm.currentWord?.id ?? "none")
-        .transition(.asymmetric(
-            insertion: .move(edge: transitionDirection > 0 ? .trailing : .leading)
-                .combined(with: .opacity),
-            removal: .move(edge: transitionDirection > 0 ? .leading : .trailing)
-                .combined(with: .opacity)
-                .combined(with: .scale(scale: 0.85))
-        ))
     }
 
     // MARK: - 底部控制
 
     private var bottomControls: some View {
         VStack(spacing: 16) {
-            // 导航按钮
             HStack(spacing: 16) {
-                // 上一张
                 navButton(icon: "◀", color: Color(hex: "60D0FF")) {
                     transitionDirection = -1
                     Haptic.light.play()
-                    withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                    withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) {
                         vm.prevCard()
                     }
                 }
 
-                // 标记当前词已学/未学
                 navButton(
                     icon: vm.isCurrentWordLearned ? "✅" : "📝",
                     color: vm.isCurrentWordLearned ? Color(hex: "9CE32D") : Color(hex: "B6A2FF")
@@ -249,25 +293,14 @@ struct FlashcardView: View {
                     vm.toggleWordLearned()
                 }
 
-                // 慢速听
-                navButton(icon: "🐌", color: Color(hex: "60D0FF")) {
-                    Haptic.light.play()
-                    vm.autoSpeak()
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                        vm.slowSpeak()
-                    }
-                }
-
-                // 听发音
                 GummyButton(label: "🔊", color: Color(hex: "FF85B3")) {
                     vm.revealWord()
                 }
 
-                // 下一张
                 navButton(icon: "▶", color: Color(hex: "60D0FF")) {
                     transitionDirection = 1
                     Haptic.light.play()
-                    withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                    withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) {
                         vm.nextCard()
                     }
                 }
@@ -275,7 +308,6 @@ struct FlashcardView: View {
 
             // 进度 + 全部学完
             HStack(spacing: 12) {
-                // 进度
                 HStack(spacing: 6) {
                     Text("📖")
                         .font(.system(size: 18))
@@ -291,7 +323,6 @@ struct FlashcardView: View {
                         .shadow(color: .black.opacity(0.04), radius: 4, x: 0, y: 2)
                 )
 
-                // 标记分类完成
                 Button(action: {
                     let wasDone = vm.isCurrentCategoryLearned
                     Haptic.medium.play()
