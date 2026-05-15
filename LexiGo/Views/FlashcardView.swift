@@ -58,7 +58,7 @@ struct FlashcardView: View {
                     .font(.bubbleFont(size: 24, relativeTo: .title2))
                     .foregroundColor(Color(hex: "4A4E69"))
 
-                Text(vm.wordProgressText)
+                Text(vm.positionText)
                     .font(.bubbleFont(size: 16, relativeTo: .subheadline))
                     .foregroundColor(Color(hex: "9CE32D"))
             }

@@ -85,6 +85,13 @@ class FlashcardVM: ObservableObject {
         return "\(learned)/\(all.count)"
     }
 
+    /// 当前卡片位置（如 "3/204"）
+    var positionText: String {
+        let total = currentCategoryWords.count
+        guard total > 0 else { return "0/0" }
+        return "\(currentIndex + 1)/\(total)"
+    }
+
     // MARK: - 初始化
 
     init() {
@@ -135,7 +142,6 @@ class FlashcardVM: ObservableObject {
         if words.isEmpty { return }
         currentIndex = (currentIndex + 1) % words.count
         wordRevealed = false
-        autoSpeak()
     }
 
     func prevCard() {
@@ -143,7 +149,6 @@ class FlashcardVM: ObservableObject {
         if words.isEmpty { return }
         currentIndex = (currentIndex - 1 + words.count) % words.count
         wordRevealed = false
-        autoSpeak()
     }
 
     func autoSpeak() {
