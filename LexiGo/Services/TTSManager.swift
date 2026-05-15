@@ -21,7 +21,7 @@ class TTSManager: NSObject, ObservableObject {
     private var audioCache: [String: Data] = [:]
 
     /// 当前使用的发音人
-    private let voiceName = "af_bella"
+    private let voiceName = "af_heart"
 
     override private init() {
         super.init()
@@ -88,7 +88,7 @@ class TTSManager: NSObject, ObservableObject {
         }
 
         isSpeaking = true
-        let speed: Float = slow ? 0.7 : 1.0
+        let speed: Float = slow ? 0.55 : 0.75
 
         Task.detached(priority: .userInitiated) {
             [weak self, engine, text, ipa, speed, voiceName] in
