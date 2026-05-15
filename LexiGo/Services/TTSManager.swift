@@ -1,12 +1,11 @@
 import AVFoundation
-import KokoroTTS
+import KokoroCoreML
 
 /// 音频管理器
 ///
-/// 使用 aufklarer/Kokoro-82M-CoreML 引擎进行高保真离线语音合成。
-/// 模型在 App 启动时后台预热，点击发音时零延迟。
-///
-/// 如果 Kokoro 模型未加载完成（启动初期），自动降级到 AVSpeechSynthesizer。
+/// 使用 jud/kokoro-coreml（Kokoro-82M 纯 CoreML 引擎）
+/// 模型从 app bundle 的 Models/ 加载（首次构建需下载）
+/// 若模型不可用则自动降级到 AVSpeechSynthesizer
 @MainActor
 class TTSManager: NSObject, ObservableObject {
     static let shared = TTSManager()
@@ -14,66 +13,60 @@ class TTSManager: NSObject, ObservableObject {
     @Published var isReady: Bool = false
     @Published var isSpeaking: Bool = false
 
-    private var kokoro: KokoroTTSModel?
+    private var engine: KokoroEngine?
     private let fallbackSynth = AVSpeechSynthesizer()
     private var audioPlayer: AVAudioPlayer?
 
-    /// 当前使用的发音人：American Female "Heart"（温暖亲切的女生）
-    private let voiceName = "af_heart"
+    /// 会话内音频缓存（text -> WAV Data）
+    private var audioCache: [String: Data] = [:]
+
+    /// 当前使用的发音人
+    private let voiceName = "af_bella"
 
     override private init() {
         super.init()
         fallbackSynth.delegate = self
-
-        Task { [weak self] in
-            await self?.loadModel()
-        }
+        loadEngine()
     }
 
-    // MARK: - 模型加载
+    // MARK: - 引擎加载
 
-    private func loadModel() async {
-        print("🎤 Loading Kokoro TTS model...")
-
-        guard let bundlePath = Bundle.main.resourcePath else {
-            print("⚠️ Cannot access bundle path")
-            return
-        }
-
-        let bundledModelDir = (bundlePath as NSString).appendingPathComponent("kokoro-coreml")
-        let fileManager = FileManager.default
-
-        guard fileManager.fileExists(atPath: bundledModelDir) else {
-            print("⚠️ Kokoro model not bundled at: \(bundledModelDir)")
-            return
-        }
-
-        // 需要从 Bundle（只读）拷贝到可写目录
-        let cacheDir = fileManager.urls(for: .cachesDirectory, in: .userDomainMask).first!
-            .appendingPathComponent("kokoro-coreml", isDirectory: true)
-
-        if !fileManager.fileExists(atPath: cacheDir.path) {
-            do {
-                try fileManager.copyItem(atPath: bundledModelDir, toPath: cacheDir.path)
-                print("✅ Copied model to cache: \(cacheDir.path)")
-            } catch {
-                print("⚠️ Failed to copy model to cache: \(error)")
-                return
+    private func loadEngine() {
+        Task.detached(priority: .high) {
+            // 优先从 bundle 加载（预打包的 Models/ 文件夹）
+            if let bundleURL = Bundle.main.resourceURL?.appendingPathComponent("kokoro_models"),
+               KokoroEngine.isDownloaded(at: bundleURL)
+            {
+                do {
+                    let eng = try KokoroEngine(modelDirectory: bundleURL)
+                    await MainActor.run {
+                        self.engine = eng
+                        self.isReady = true
+                        print("✅ Kokoro engine loaded from bundle. \(eng.availableVoices.count) voices")
+                    }
+                    return
+                } catch {
+                    print("⚠️ Kokoro bundle load failed: \(error)")
+                }
             }
-        }
 
-        do {
-            let model = try await KokoroTTSModel.fromPretrained(
-                modelId: "aufklarer/Kokoro-82M-CoreML",
-                voice: voiceName,
-                cacheDir: cacheDir,
-                offlineMode: true
-            )
-            self.kokoro = model
-            self.isReady = true
-            print("✅ Kokoro TTS loaded! Voice: \(voiceName)")
-        } catch {
-            print("⚠️ Kokoro load failed: \(error)")
+            // 回退到缓存目录
+            let cacheDir = KokoroEngine.defaultModelDirectory
+            if KokoroEngine.isDownloaded(at: cacheDir) {
+                do {
+                    let eng = try KokoroEngine(modelDirectory: cacheDir)
+                    await MainActor.run {
+                        self.engine = eng
+                        self.isReady = true
+                        print("✅ Kokoro engine loaded from cache.")
+                    }
+                    return
+                } catch {
+                    print("⚠️ Kokoro cache load failed: \(error)")
+                }
+            }
+
+            print("⚠️ Kokoro models not available — using AVSpeechSynthesizer fallback")
         }
     }
 
@@ -83,10 +76,45 @@ class TTSManager: NSObject, ObservableObject {
     func speak(text: String, ipa: String? = nil, slow: Bool = false) {
         stop()
 
-        if let kokoro = kokoro, isReady {
-            speakWithKokoro(kokoro, text: text, slow: slow)
-        } else {
+        // 缓存命中
+        if let cached = audioCache[text] {
+            playWAVData(cached)
+            return
+        }
+
+        guard let engine = engine, isReady else {
             speakWithFallback(text: text, slow: slow)
+            return
+        }
+
+        isSpeaking = true
+        let speed: Float = slow ? 0.7 : 1.0
+
+        Task.detached(priority: .userInitiated) {
+            [weak self, engine, text, ipa, speed, voiceName] in
+            do {
+                let result: SynthesisResult
+                if let ipa = ipa, !ipa.isEmpty {
+                    result = try engine.synthesize(ipa: ipa, voice: voiceName, speed: speed)
+                } else {
+                    result = try engine.synthesize(text: text, voice: voiceName, speed: speed)
+                }
+                let wavData = Self.buildWAV(from: result.samples)
+
+                await MainActor.run { [text, wavData] in
+                    guard let self else { return }
+                    self.audioCache[text] = wavData
+                    self.playWAVData(wavData)
+                    self.isSpeaking = false
+                }
+            } catch {
+                await MainActor.run { [text, slow] in
+                    guard let self else { return }
+                    print("⚠️ Kokoro synthesis failed: \(error)")
+                    self.isSpeaking = false
+                    self.speakWithFallback(text: text, slow: slow)
+                }
+            }
         }
     }
 
@@ -96,84 +124,66 @@ class TTSManager: NSObject, ObservableObject {
         isSpeaking = false
     }
 
-    // MARK: - Kokoro 引擎
+    // MARK: - WAV 播放
 
-    private func speakWithKokoro(_ model: KokoroTTSModel, text: String, slow: Bool) {
-        let speed: Float = slow ? 0.6 : 1.0
-
-        Task { @MainActor in
-            do {
-                isSpeaking = true
-                let pcmFloats: [Float] = try model.synthesize(
-                    text: text,
-                    voice: voiceName,
-                    speed: speed
-                )
-                try playPCMAudio(pcmFloats, sampleRate: 24000)
-                isSpeaking = false
-            } catch {
-                print("⚠️ Kokoro synthesis failed: \(error)")
-                isSpeaking = false
-                speakWithFallback(text: text, slow: slow)
-            }
+    private func playWAVData(_ data: Data) {
+        guard !data.isEmpty else { return }
+        do {
+            audioPlayer = try AVAudioPlayer(data: data)
+            audioPlayer?.delegate = self
+            audioPlayer?.volume = 1.0
+            audioPlayer?.play()
+        } catch {
+            print("⚠️ AVAudioPlayer init failed: \(error)")
         }
     }
 
-    /// 将 [Float] PCM 数据转为 WAV 并播放
-    private func playPCMAudio(_ samples: [Float], sampleRate: Int) throws {
-        let tempDir = FileManager.default.temporaryDirectory
-        let tempFile = tempDir.appendingPathComponent("kokoro_\(UUID().uuidString).wav")
+    // MARK: - WAV 构建（16-bit PCM）
 
-        var wavData = Data()
+    private nonisolated static func buildWAV(from samples: [Float], sampleRate: Int = 24000) -> Data {
+        let numSamples = samples.count
+        let dataSize = numSamples * 2
+        let fileSize = 44 + dataSize
 
-        // RIFF header
-        let dataSize = UInt32(samples.count * 4)
-        let fileSize = dataSize + 36
-        wavData.append("RIFF".data(using: .ascii)!)
-        wavData.append(Data(of: fileSize))
-        wavData.append("WAVE".data(using: .ascii)!)
+        var data = Data(capacity: fileSize)
 
-        // fmt chunk (IEEE Float 32)
-        let audioFormat: UInt16 = 3
-        let numChannels: UInt16 = 1
-        let sr = UInt32(sampleRate)
-        let byteRate = sr * UInt32(numChannels * 4)
-        let blockAlign = numChannels * 4
-        let bitsPerSample: UInt16 = 32
+        func appendLE<T: FixedWidthInteger>(_ value: T) {
+            var v = value.littleEndian
+            withUnsafeBytes(of: &v) { data.append(contentsOf: $0) }
+        }
 
-        wavData.append("fmt ".data(using: .ascii)!)
-        wavData.append(Data(of: UInt32(16)))
-        wavData.append(Data(of: audioFormat))
-        wavData.append(Data(of: numChannels))
-        wavData.append(Data(of: sr))
-        wavData.append(Data(of: byteRate))
-        wavData.append(Data(of: blockAlign))
-        wavData.append(Data(of: bitsPerSample))
+        data.append(contentsOf: [0x52, 0x49, 0x46, 0x46])  // "RIFF"
+        appendLE(UInt32(fileSize - 8))
+        data.append(contentsOf: [0x57, 0x41, 0x56, 0x45])  // "WAVE"
+        data.append(contentsOf: [0x66, 0x6D, 0x74, 0x20])  // "fmt "
+        appendLE(UInt32(16))
+        appendLE(UInt16(1))   // PCM
+        appendLE(UInt16(1))   // mono
+        appendLE(UInt32(sampleRate))
+        appendLE(UInt32(sampleRate * 2))
+        appendLE(UInt16(2))   // block align
+        appendLE(UInt16(16))  // bits per sample
+        data.append(contentsOf: [0x64, 0x61, 0x74, 0x61])  // "data"
+        appendLE(UInt32(dataSize))
 
-        // data chunk
-        wavData.append("data".data(using: .ascii)!)
-        wavData.append(Data(of: dataSize))
-        samples.withUnsafeBytes { wavData.append(Data($0)) }
+        var int16Samples = [Int16](repeating: 0, count: numSamples)
+        for i in 0..<numSamples {
+            let clamped = max(-1.0, min(1.0, samples[i]))
+            int16Samples[i] = Int16(clamped * 32767)
+        }
+        int16Samples.withUnsafeBytes { data.append(contentsOf: $0) }
 
-        try wavData.write(to: tempFile)
-
-        audioPlayer = try AVAudioPlayer(contentsOf: tempFile)
-        audioPlayer?.delegate = self
-        audioPlayer?.volume = 1.0
-        audioPlayer?.play()
+        return data
     }
 
-    // MARK: - 降级方案 (AVSpeechSynthesizer)
+    // MARK: - 降级方案（AVSpeechSynthesizer）
 
     private func speakWithFallback(text: String, slow: Bool) {
         let utterance = AVSpeechUtterance(string: text)
-
-        // 优先使用 Premium 品质（Siri 语音，iOS 17+），模拟器上可能回退
         let usVoices = AVSpeechSynthesisVoice.speechVoices().filter { $0.language == "en-US" }
         utterance.voice = usVoices.first(where: { $0.quality == .premium })
             ?? usVoices.first(where: { $0.quality == .enhanced })
             ?? AVSpeechSynthesisVoice(language: "en-US")
-
         utterance.rate = slow ? 0.22 : 0.45
         utterance.pitchMultiplier = 1.2
         utterance.volume = 1.0
@@ -185,23 +195,19 @@ class TTSManager: NSObject, ObservableObject {
 // MARK: - AVAudioPlayerDelegate
 
 extension TTSManager: AVAudioPlayerDelegate {
-    func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
-        isSpeaking = false
+    nonisolated func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
+        Task { @MainActor in
+            Self.shared.isSpeaking = false
+        }
     }
 }
 
 // MARK: - AVSpeechSynthesizerDelegate
 
 extension TTSManager: AVSpeechSynthesizerDelegate {
-    func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
-        isSpeaking = false
-    }
-}
-
-// MARK: - Helper
-
-extension Data {
-    init<T>(of value: T) {
-        self = Swift.withUnsafeBytes(of: value) { Data($0) }
+    nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
+        Task { @MainActor in
+            Self.shared.isSpeaking = false
+        }
     }
 }

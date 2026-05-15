@@ -3,7 +3,7 @@ options:
   bundleIdPrefix: com.lexigo
   deploymentTarget:
     iOS: "18.0"
-  xcodeVersion: "15.0"
+  xcodeVersion: "16.0"
 
 settings:
   SWIFT_VERSION: "5.9"
@@ -21,17 +21,17 @@ settings:
     - UIInterfaceOrientationLandscapeRight
 
 packages:
-  speech-swift:
-    url: https://github.com/soniqo/speech-swift
-    branch: main
+  KokoroCoreML:
+    url: https://github.com/Jud/kokoro-coreml.git
+    from: 0.8.0
 
 targets:
   LexiGo:
     type: application
     platform: iOS
     dependencies:
-      - package: speech-swift
-        product: KokoroTTS
+      - package: KokoroCoreML
+        product: KokoroCoreML
     sources:
       - path: LexiGo
         excludes:
@@ -40,11 +40,10 @@ targets:
         group: categorized
         type: folder
         buildPhase: resources
-      - path: ../kokoro-coreml
-        group: kokoro-coreml
+      - path: kokoro_models
+        group: KokoroModels
         type: folder
         buildPhase: resources
-        createsGroup: true
     info:
       path: LexiGo/Info.plist
       properties:
@@ -59,5 +58,4 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.lexigo.app
         INFOPLIST_FILE: LexiGo/Info.plist
-        DEVELOPMENT_TEAM: ""
-        # SWIFT_OBJC_BRIDGING_HEADER: LexiGo/Bridging-Header.h
+        DEVELOPMENT_TEAM: "FUU4946D45"

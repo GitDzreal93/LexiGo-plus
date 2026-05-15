@@ -13,6 +13,9 @@ build/
 # XcodeGen generated (keep project.yml, regenerate with: xcodegen generate)
 LexiGo.xcodeproj
 
+# Kokoro CoreML models (download separately, ~106MB)
+kokoro_models/
+
 # Environment
 .env
 *.p12
